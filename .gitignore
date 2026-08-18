@@ -1,1 +1,14 @@
-.env
+# Código do daemon clonado via chave de deploy — não versionar aqui,
+# vive no próprio repositório do daemon.
+vpn-daemon/
+
+# Segredos e configs reais
+*.env
+!config-examples/*.env.example
+config-examples/*.example.filled
+**/saml_cookie
+**/browser_state.json
+*.toml
+
+# Configs reais (só os .example ficam versionados)
+.claude/
