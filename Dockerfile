@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
     libssl-dev \
+    libsqlite3-dev \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -76,6 +77,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 \
     libasound2 \
     fonts-liberation \
+    libsqlite3-0 \
+    socat \
     && rm -rf /var/lib/apt/lists/*
 
 # Binários do snx-rs vindos do stage de build
