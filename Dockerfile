@@ -3,7 +3,11 @@
 # =========================================================
 # Stage 1 - build snx-rs a partir do source (Rust)
 # =========================================================
-FROM rust:1.80-slim-bookworm AS snx-builder
+# snx-rs usa Cargo edition2024, estabilizada só a partir do Rust 1.85 —
+# 1.80 dava "feature `edition2024` is required". Usamos "rust:slim-bookworm"
+# (sem pin de versão) pra sempre pegar o Rust estável mais recente e não
+# repetir esse problema quando o snx-rs adotar features futuras.
+FROM rust:slim-bookworm AS snx-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
