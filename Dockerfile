@@ -41,11 +41,10 @@ RUN cargo build --release --bin snx-rs && \
 FROM debian:bookworm-slim AS forti-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
+    build-essential \
     automake \
     autoconf \
     libssl-dev \
-    make \
     pkg-config \
     git \
     ca-certificates \
