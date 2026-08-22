@@ -20,14 +20,56 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 
-# Repo oficial do snx-rs (ajuste a tag/branch se quiser fixar uma versão)
-RUN git clone --depth 1 https://github.com/ancwrd1/snx-rs.git .
+# Fixado em v6.2.4 (a versão que compilou com sucesso) — evita que o
+# build quebre de novo sem aviso quando o mantenedor fizer mudanças
+# incompatíveis (como aconteceu com a exigência de edition2024). Pra
+# atualizar deliberadamente no futuro, troque a tag aqui e teste o build
+# antes de fazer merge/deploy.
+ARG SNX_RS_VERSION=v6.2.4
+RUN git clone --branch "${SNX_RS_VERSION}" --depth 1 https://github.com/ancwrd1/snx-rs.git .
 
 RUN cargo build --release --bin snx-rs && \
     cargo build --release --bin snxctl
 
 # =========================================================
-# Stage 2 - imagem final
+# Stage 2 - build openfortivpn a partir do source (C/autotools)
+# =========================================================
+# O pacote `openfortivpn` do apt no Debian 12 (bookworm) é anterior à
+# 1.23.0, quando o suporte a --saml-login foi adicionado — o daemon
+# Python depende dessa flag, então precisamos compilar uma versão mais
+# recente do source em vez de usar o pacote do apt.
+FROM debian:bookworm-slim AS forti-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    automake \
+    autoconf \
+    libssl-dev \
+    make \
+    pkg-config \
+    git \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Fixado numa tag específica (>=1.23.0, que tem --saml-login) pelo mesmo
+# motivo do snx-rs: builds futuros não devem quebrar por mudanças
+# incompatíveis no repositório upstream sem aviso.
+ARG OPENFORTIVPN_VERSION=v1.23.1
+RUN git clone --branch "${OPENFORTIVPN_VERSION}" --depth 1 \
+    https://github.com/adrienverge/openfortivpn.git .
+
+RUN ./autogen.sh && \
+    ./configure --prefix=/usr --sysconfdir=/etc && \
+    make -j"$(nproc)" && \
+    # Confirma o binário compilado antes do COPY --from no stage final —
+    # se o `make` mudar de layout de saída no futuro, isso falha aqui com
+    # mensagem clara em vez de um "file not found" opaco no COPY.
+    test -x /build/src/openfortivpn
+
+# =========================================================
+# Stage 3 - imagem final
 # =========================================================
 FROM debian:bookworm-slim
 
@@ -43,7 +85,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # mesma exigida pelo `playwright install-deps`)
 # ------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    openfortivpn \
+    ppp \
     wireguard-tools \
     iproute2 \
     iptables \
@@ -81,24 +123,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     socat \
     && rm -rf /var/lib/apt/lists/*
 
-# Binários do snx-rs vindos do stage de build
+# Binários do snx-rs e do openfortivpn (compilado do source, com SAML)
 COPY --from=snx-builder /build/target/release/snx-rs /usr/local/bin/snx-rs
 COPY --from=snx-builder /build/target/release/snxctl /usr/local/bin/snxctl
-RUN chmod +x /usr/local/bin/snx-rs /usr/local/bin/snxctl
+COPY --from=forti-builder /build/src/openfortivpn /usr/bin/openfortivpn
+RUN chmod +x /usr/local/bin/snx-rs /usr/local/bin/snxctl /usr/bin/openfortivpn
 
-# ------------------------------------------------------------
-# Usuário não-root pro daemon, com sudo NOPASSWD restrito só ao
-# openfortivpn (nada de rodar o container inteiro como root)
-# ------------------------------------------------------------
 # ------------------------------------------------------------
 # Usuário não-root pro daemon, com sudo NOPASSWD restrito só ao
 # openfortivpn e pkill (nada de rodar o container inteiro como root)
 #
-# O caminho do binário openfortivpn varia entre versões/distros do
-# pacote apt (pode ser /usr/sbin/ ou /usr/bin/) — resolvemos com `which`
-# no momento do build em vez de fixar um caminho que pode não bater com
-# o real, o que faria o sudo recusar silenciosamente (regra não confere
-# com o caminho exato chamado) e travar esperando senha.
+# O caminho do binário openfortivpn agora é fixo (/usr/bin/openfortivpn,
+# definido no COPY --from=forti-builder acima), mas ainda resolvemos com
+# `command -v` no momento do build por segurança — se o caminho de
+# instalação mudar no futuro, o sudo recusaria silenciosamente (regra não
+# bate com o caminho exato chamado) e travaria esperando senha.
 # ------------------------------------------------------------
 RUN useradd --system --create-home --home-dir /opt/vpn-daemon --shell /bin/bash vpndaemon && \
     OPENFORTIVPN_BIN="$(command -v openfortivpn)" && \
