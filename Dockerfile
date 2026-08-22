@@ -3,14 +3,13 @@
 # =========================================================
 # Stage 1 - build snx-rs a partir do source (Rust)
 # =========================================================
-FROM docker.io/library/rust:1-slim-bookworm AS snx-builder
+FROM rust:1.80-slim-bookworm AS snx-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     build-essential \
     pkg-config \
     libssl-dev \
-    libsqlite3-dev \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -25,9 +24,9 @@ RUN cargo build --release --bin snx-rs && \
 # =========================================================
 # Stage 2 - imagem final
 # =========================================================
-FROM docker.io/library/debian:bookworm-slim
+FROM debian:bookworm-slim
 
-LABEL maintainer="filipe.meira@neog.cloud"
+LABEL maintainer="infra@suaempresa.com"
 LABEL description="Gateway VPN unificado: openfortivpn (daemon SAML/Playwright) + snx-rs + WireGuard"
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -51,7 +50,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     procps \
     net-tools \
-    socat \
     sudo \
     gosu \
     python3 \
@@ -85,11 +83,25 @@ RUN chmod +x /usr/local/bin/snx-rs /usr/local/bin/snxctl
 # Usuário não-root pro daemon, com sudo NOPASSWD restrito só ao
 # openfortivpn (nada de rodar o container inteiro como root)
 # ------------------------------------------------------------
+# ------------------------------------------------------------
+# Usuário não-root pro daemon, com sudo NOPASSWD restrito só ao
+# openfortivpn e pkill (nada de rodar o container inteiro como root)
+#
+# O caminho do binário openfortivpn varia entre versões/distros do
+# pacote apt (pode ser /usr/sbin/ ou /usr/bin/) — resolvemos com `which`
+# no momento do build em vez de fixar um caminho que pode não bater com
+# o real, o que faria o sudo recusar silenciosamente (regra não confere
+# com o caminho exato chamado) e travar esperando senha.
+# ------------------------------------------------------------
 RUN useradd --system --create-home --home-dir /opt/vpn-daemon --shell /bin/bash vpndaemon && \
-    echo 'vpndaemon ALL=(root) NOPASSWD: /usr/sbin/openfortivpn, /usr/bin/pkill' \
+    OPENFORTIVPN_BIN="$(command -v openfortivpn)" && \
+    PKILL_BIN="$(command -v pkill)" && \
+    echo "vpndaemon ALL=(root) NOPASSWD: ${OPENFORTIVPN_BIN}, ${PKILL_BIN}" \
         > /etc/sudoers.d/vpndaemon && \
     chmod 440 /etc/sudoers.d/vpndaemon && \
-    visudo -c
+    visudo -c && \
+    echo "openfortivpn resolvido em: ${OPENFORTIVPN_BIN}" && \
+    echo "pkill resolvido em: ${PKILL_BIN}"
 
 # Estrutura de diretórios de config (serão montados como volumes em produção)
 RUN mkdir -p \
