@@ -3,7 +3,7 @@
 # =========================================================
 # Stage 1 - build snx-rs a partir do source (Rust)
 # =========================================================
-FROM rust:1-slim-bookworm AS snx-builder
+FROM docker.io/library/rust:1-slim-bookworm AS snx-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
@@ -25,7 +25,7 @@ RUN cargo build --release --bin snx-rs && \
 # =========================================================
 # Stage 2 - imagem final
 # =========================================================
-FROM debian:bookworm-slim
+FROM docker.io/library/debian:bookworm-slim
 
 LABEL maintainer="filipe.meira@neog.cloud"
 LABEL description="Gateway VPN unificado: openfortivpn (daemon SAML/Playwright) + snx-rs + WireGuard"
