@@ -163,7 +163,7 @@ COPY vpn-daemon/requirements.txt /opt/vpn-daemon/requirements.txt
 RUN python3 -m venv /opt/vpn-daemon/.venv && \
     /opt/vpn-daemon/.venv/bin/pip install --no-cache-dir --upgrade pip && \
     /opt/vpn-daemon/.venv/bin/pip install --no-cache-dir -r /opt/vpn-daemon/requirements.txt && \
-    /opt/vpn-daemon/.venv/bin/python -m playwright install chromium chromium_headless_shell && \
+    /opt/vpn-daemon/.venv/bin/python -m playwright install chromium chromium-headless-shell && \
     chown -R vpndaemon:vpndaemon /opt/vpn-daemon
 
 COPY vpn-daemon/ /opt/vpn-daemon/
