@@ -1,16 +1,17 @@
-# Código do daemon clonado via chave de deploy — não versionar aqui,
-# vive no próprio repositório do daemon.
+# Código do daemon — clonado via CI, não versionado aqui
 vpn-daemon/
 
-# Segredos e configs reais
+# Credenciais e configs reais
 *.env
-!config-examples/*.env.example
-config-examples/*.example.filled
+!forti-daemon.env.example
+*.toml
+!snx-config.example.toml
+
+# Sessão do navegador e cookies
 **/saml_cookie
 **/browser_state.json
-*.toml
+**/.local/
 
-# Configs reais (só os .example ficam versionados)
-.claude/
-
+# Builds e temporários
 *.tar.gz
+.claude/

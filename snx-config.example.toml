@@ -1,0 +1,18 @@
+# /etc/vpn-gateway/snx/config.toml
+# Referência: https://github.com/ancwrd1/snx-rs
+
+server-name = "vpn.clienteB.com.br"
+auth-type = "saml"  # ou "password" / "cert", conforme o cliente
+
+# Se auth-type = "password":
+# user-name = "seu_usuario"
+# password = "sua_senha"
+
+# Interface de rede que o snx-rs vai criar
+if-name = "snx0"
+
+# Não substituir a rota default -- rotear só as sub-redes do cliente
+no-default-route = true
+
+# Sub-redes do cliente B que devem passar por esse túnel
+routes = ["10.20.0.0/16", "172.16.5.0/24"]

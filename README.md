@@ -1,239 +1,168 @@
 # VPN Gateway Unificado — Podman
 
-Imagem única com **openfortivpn** (autenticado por um daemon Python que
-resolve SAML + MFA da Microsoft via Playwright/Chromium headless),
-**snx-rs** (Check Point) e **WireGuard**, rodando túneis simultâneos, cada
-um roteando apenas as sub-redes do cliente correspondente.
+Imagem container com **openfortivpn** (SAML/MFA via Playwright/Chromium headless), **snx-rs** (Check Point) e **WireGuard** — túneis simultâneos, cada um roteando apenas as sub-redes do cliente.
 
-## Estrutura esperada do projeto
+## Estrutura do projeto
 
 ```
-vpn-gateway/
-├── Dockerfile
-├── entrypoint.sh
+vpners/
+├── Dockerfile                    # Build multi-stage (snx-rs, openfortivpn, imagem final)
+├── entrypoint.sh                 # Inicia todos os túneis + socat forwards
 ├── scripts/
-│   ├── start-forti-daemon.sh
-│   ├── start-snx.sh
-│   ├── start-wireguard.sh
-│   └── healthcheck.sh
-├── vpn-daemon/              <- você clona aqui ANTES do build (não versionado)
-│   ├── vpn_daemon.py
-│   └── requirements.txt
-└── config-examples/
+│   ├── start-forti-daemon.sh     # Daemon Python (SAML/Chromium) como vpndaemon
+│   ├── start-snx.sh              # snx-rs com config.toml
+│   ├── start-wireguard.sh        # wg-quick up + monitoramento
+│   └── healthcheck.sh            # Verifica interfaces ativas
+├── vpn-daemon/                   # Clonado via CI (não versionado neste repo)
+├── forti-daemon.env.example      # Template de credenciais openfortivpn
+├── snx-config.example.toml       # Template config snx-rs
+└── wg0.conf.example              # Template config WireGuard
 ```
 
-## Pré-requisitos no host (Oracle E1 / Ampere)
+## Pré-requisitos no host
+
+- **Podman** (ou Docker)
+- **Kernel com suporte PPP** (openfortivpn usa pppd)
+- **`/dev/net/tun`** disponível
+- **`/dev/ppp`** disponível (ou criado via `mknod /dev/ppp c 108 0`)
 
 ```bash
-sudo apt-get update && sudo apt-get install -y podman git
-
-sudo modprobe tun
-ls -la /dev/net/tun   # deve existir
+# Verificar
+ls -la /dev/net/tun /dev/ppp
+sudo modprobe ppp_generic  # deve funcionar
 ```
 
-## 1. Clonar o daemon (fora do container)
+> **Oracle Cloud**: o kernel Oracle no x86_64 **remove PPP**. Veja [DEPLOY-ORACLE.md](DEPLOY-ORACLE.md) para resolver.
 
-O código do daemon fica num repo privado com deploy key. Clone ele **no
-host**, direto na pasta `vpn-daemon/` ao lado do Dockerfile — assim a
-chave nunca entra em nenhuma camada da imagem:
+## Build da imagem
 
 ```bash
-cd vpn-gateway
-GIT_SSH_COMMAND="ssh -i /caminho/da/sua/deploy_key -o IdentitiesOnly=yes" \
-  git clone git@github.com:sua-org/vpn-daemon.git vpn-daemon
-```
+# Clone o vpn-daemon (repo público) na pasta do projeto
+git clone https://github.com/moonlipe/openforti-saml-resolver.git vpn-daemon
 
-`vpn-daemon/` já está no `.gitignore` deste projeto — o Dockerfile só faz
-`COPY vpn-daemon/` do que estiver nessa pasta no momento do build.
-
-## 2. Build da imagem
-
-```bash
+# Build
 podman build -t vpn-gateway:latest .
 ```
 
-O build:
-- compila o `snx-rs` do source (stage 1, Rust)
-- instala `openfortivpn`, `wireguard-tools` e as libs do Chromium headless
-- cria o venv Python, instala `requirements.txt` e baixa o Chromium via
-  `playwright install chromium`
-- cria o usuário não-root `vpndaemon`, com `sudo NOPASSWD` restrito
-  **apenas** ao binário `openfortivpn` (não a comandos arbitrários)
+Ou faça push no branch `main` — o GitHub Actions builda e publica em `ghcr.io/moonlipe/vpn-gateway:latest` automaticamente.
 
-> **x86_64 agora, ARM64 depois:** para buildar explicitamente pra ARM
-> quando migrar pra Ampere:
-> ```bash
-> podman build --platform linux/arm64 -t vpn-gateway:arm64 .
-> ```
-> O Chromium do Playwright tem build ARM64 oficial, então isso deve
-> funcionar sem mudanças — mas vale testar o fluxo de MFA de novo depois
-> da migração, containers ARM à vezes têm diferenças sutis de timing.
+## Configuração
 
-## 3. Preparar as configs
-
-### Daemon SAML (openfortivpn)
-
-Copie o exemplo de env e preencha com as credenciais reais:
+### openfortivpn (SAML)
 
 ```bash
-cp config-examples/forti-daemon.env.example ~/vpn-configs/vpn-daemon.env
-chmod 600 ~/vpn-configs/vpn-daemon.env
-# edite VPN_GATEWAY, VPN_USERNAME, VPN_PASSWORD
+cp forti-daemon.env.example forti-daemon.env
+chmod 600 forti-daemon.env
+# Preencha VPN_GATEWAY, VPN_USERNAME, VPN_PASSWORD
 ```
 
-**Nunca** passe essas credenciais via `ARG`/`ENV` no Dockerfile ou
-`COPY` de um `.env` pra dentro da imagem — sempre via `--env-file` no
-`podman run`, como no passo 4.
-
-### snx-rs e WireGuard
+### snx-rs (Check Point)
 
 ```bash
-mkdir -p ~/vpn-configs/{snx,wireguard}
-cp config-examples/snx-config.example.toml ~/vpn-configs/snx/config.toml
-cp config-examples/wg0.conf.example ~/vpn-configs/wireguard/wg0.conf
+mkdir -p ~/vpn-configs/snx
+cp snx-config.example.toml ~/vpn-configs/snx/config.toml
+# Edite server-name, auth-type, routes
+```
+
+### WireGuard
+
+```bash
+mkdir -p ~/vpn-configs/wireguard
+cp wg0.conf.example ~/vpn-configs/wireguard/wg0.conf
 chmod 600 ~/vpn-configs/wireguard/wg0.conf
-# edite com os dados reais de cada cliente
 ```
 
-## 3.1 Port-forwards com socat (opcional)
-
-A imagem inclui `socat`. Se algum serviço do lado do cliente precisa ser
-exposto numa porta fixa do host (ex: RDP, um banco), em vez de subir
-`socat` manualmente (o que não sobrevive a um restart do container), use
-a env var `SOCAT_FORWARDS` — o `entrypoint.sh` recria os forwards toda
-vez que o container inicia:
-
-```bash
-# formato: porta_local:ip_destino:porta_destino, separados por vírgula
-SOCAT_FORWARDS="4000:10.105.0.2:3389,4001:10.105.0.2:19990,4002:10.105.0.2:18766"
-```
-
-Adicione ao `vpn-daemon.env` (ou passe com `-e`) e mapeie as portas
-correspondentes no `podman run` com `-p`:
-
-```bash
--e SOCAT_FORWARDS="4000:10.105.0.2:3389,4001:10.105.0.2:19990,4002:10.105.0.2:18766" \
--p 4000:4000 -p 4001:4001 -p 4002:4002 \
-```
-
-Cada forward roda como processo monitorado igual às VPNs (é derrubado
-no `cleanup` e reiniciado junto com o resto se o container reiniciar) e
-loga em `/var/log/vpn-gateway/socat.log`.
-
-## 4. Rodar o container
+## Rodar
 
 ```bash
 podman run -d \
   --name vpn-gateway \
   --cap-add NET_ADMIN \
   --device /dev/net/tun \
+  --device /dev/ppp \
   --sysctl net.ipv4.ip_forward=1 \
-  --env-file ~/vpn-configs/vpn-daemon.env \
+  --env-file forti-daemon.env \
+  -e SOCAT_FORWARDS="4000:10.0.0.100:3389" \
   -v ~/vpn-configs/snx:/etc/vpn-gateway/snx:Z \
   -v ~/vpn-configs/wireguard:/etc/vpn-gateway/wireguard:Z \
   -v vpn-daemon-state:/opt/vpn-daemon/.local:Z \
-  -p 3389:3389 \
-  -p 5432:5432 \
+  -p 4000:4000 \
   --restart unless-stopped \
-  vpn-gateway:latest
+  ghcr.io/moonlipe/vpn-gateway:latest
 ```
 
-Pontos importantes:
+Flags obrigatórias:
+- `--cap-add NET_ADMIN` + `--device /dev/net/tun`: para criar interfaces de rede
+- `--device /dev/ppp`: para o openfortivpn usar pppd
+- `--env-file`: credenciais nunca entram na imagem
+- `vpn-daemon-state`: persiste sessão do navegador (evita MFA a cada restart)
 
-- **`--cap-add NET_ADMIN` + `--device /dev/net/tun`**: obrigatórios, sem
-  isso nenhuma das três VPNs sobe.
-- **`--env-file`**: é assim que `VPN_GATEWAY`/`VPN_USERNAME`/`VPN_PASSWORD`
-  chegam no daemon, sem tocar a imagem.
-- **`vpn-daemon-state` (volume nomeado)**: persiste a sessão do navegador
-  (`browser_state.json`) entre restarts do container. É esse volume que
-  guarda o cookie "não perguntar novamente por 14 dias" do Azure AD — sem
-  ele, todo restart do container = MFA de novo. Crie o volume antes, se
-  quiser:
-  ```bash
-  podman volume create vpn-daemon-state
-  ```
-- Ajuste as portas `-p` para os serviços reais atrás de cada túnel (RDP,
-  bancos, etc.) — como cada VPN roteia só a sub-rede do seu cliente, o
-  container atua como gateway único.
+## Port-forwards com socat
 
-## 5. Primeira execução (MFA)
-
-Como `VPN_HEADLESS=1` é o padrão, o Chromium roda sem janela — a
-aprovação do MFA acontece no **celular do usuário titular da conta**, não
-no terminal. Acompanhe pelos logs:
+Exponha serviços de sub-redes atrás dos túneis:
 
 ```bash
-podman logs -f vpn-gateway
-# ou especificamente:
-podman exec vpn-gateway tail -f /var/log/vpn-gateway/forti.log
+# formato: porta_local:ip_destino:porta_destino (separados por vírgula)
+-e SOCAT_FORWARDS="4000:10.0.0.100:3389,4010:10.0.0.200:3389"
+-p 4000:4000 -p 4010:4010
 ```
 
-Você vai ver o número de number-matching no log (`🔢 Número para
-confirmar no celular: XX`) — confirme esse número no app Microsoft
-Authenticator. Depois da primeira aprovação bem-sucedida, a sessão fica
-salva no volume `vpn-daemon-state` e as próximas reconexões (dentro da
-janela de 14 dias do "não perguntar novamente") não devem pedir MFA de
-novo.
+## Primeira execução (MFA)
 
-Se precisar depurar visualmente o fluxo (ex: seletor quebrou depois de
-uma atualização do Azure AD), rode uma vez com:
+1. Acompanhe os logs: `podman logs -f vpn-gateway`
+2. O daemon abre Chromium headless, navega para o gateway e aguarda MFA
+3. Aprovação acontece no **celular** (Microsoft Authenticator)
+4. Após aprovação, sessão fica salva no volume `vpn-daemon-state`
+5. Próximas reconexões (dentro da janela de 14 dias) não pedem MFA
+
+### Modo debug (com screenshots)
 
 ```bash
 podman run --rm -it \
-  --cap-add NET_ADMIN --device /dev/net/tun \
-  --env-file ~/vpn-configs/vpn-daemon.env \
+  --cap-add NET_ADMIN --device /dev/net/tun --device /dev/ppp \
+  --env-file forti-daemon.env \
   -e VPN_SCREENSHOTS=1 -e VPN_DEBUG=1 \
   -v vpn-daemon-state:/opt/vpn-daemon/.local:Z \
-  vpn-gateway:latest
+  ghcr.io/moonlipe/vpn-gateway:latest
 ```
 
-E depois inspecione as screenshots em
-`/opt/vpn-daemon/.local/share/vpn-daemon/screenshots/` dentro do
-container (`podman cp` pra tirar do container).
+Screenshots ficam em `/opt/vpn-daemon/.local/share/vpn-daemon/screenshots/` dentro do container.
 
-## 6. Verificar que os túneis subiram
+## Verificar túneis
 
 ```bash
 podman exec vpn-gateway ip -brief addr show
-# Deve mostrar ppp0 (forti), tun0/snx0 (snx-rs) e wg0 (wireguard)
+# ppp0     (openfortivpn)  snx-xfrm (snx-rs)  wg0 (wireguard)
 
 podman exec vpn-gateway ip route show
 ```
 
-## 7. Logs
+## Logs
 
 ```bash
 podman exec vpn-gateway tail -f /var/log/vpn-gateway/forti.log
 podman exec vpn-gateway tail -f /var/log/vpn-gateway/snx.log
 podman exec vpn-gateway tail -f /var/log/vpn-gateway/wireguard.log
+podman exec vpn-gateway tail -f /var/log/vpn-gateway/socat.log
 ```
 
-## Sobre o roteamento simultâneo
+## Roteamento simultâneo
 
-Como cada VPN aqui é configurada para **não** assumir a rota default
-(`no-default-route`/`AllowedIPs` restrito às sub-redes do cliente), as
-três interfaces coexistem sem conflito de rota. O tráfego para a sub-rede
-do Cliente A vai por `ppp0`, do Cliente B por `snx0`/`tun0`, do Cliente C
-por `wg0`, e todo o resto sai pela rota default normal do container.
-
-Se algum cliente exigir que TODO o tráfego passe pelo túnel dele
-(0.0.0.0/0), isso vai conflitar com os outros dois — nesse caso, vocês
-precisam de policy routing (tabelas de rota separadas + `ip rule`) em vez
-de rota simples.
+Cada VPN roteia **apenas** as sub-redes do seu cliente (`no-default-route` / `AllowedIPs` restrito), então as interfaces coexistem sem conflito. Se algum cliente exigir 0.0.0.0/0, será necessário policy routing com tabelas separadas + `ip rule`.
 
 ## Segurança
 
-- `vpn-daemon.env` e as pastas de config têm credenciais e chaves
-  privadas — nunca commitar, sempre `chmod 600`.
-- O daemon roda como usuário não-root (`vpndaemon`) com `sudo NOPASSWD`
-  restrito **apenas** ao binário `openfortivpn` — não há acesso root
-  irrestrito no container.
-- O container ainda precisa de `NET_ADMIN`, que é um privilégio elevado
-  no nível do container — trate o host Oracle como perímetro de
-  confiança.
-- Considere rodar o container em rede isolada (`podman network create`)
-  e só expor as portas de serviço (RDP, DB) que realmente precisam ser
-  acessadas externamente.
-- O volume `vpn-daemon-state` guarda sessão de autenticação — trate-o com
-  o mesmo cuidado que uma credencial (backup criptografado, acesso
-  restrito ao host).
+- Credenciais nunca entram na imagem — sempre via `--env-file`
+- Daemon roda como `vpndaemon` (não-root) com sudo restrito ao `openfortivpn`
+- `NET_ADMIN` é privilégio elevado — trate o host como perímetro de confiança
+- Volume `vpn-daemon-state` guarda sessão de auth — trate como credencial
+
+## CI/CD
+
+Push no branch `main` dispara build automático via GitHub Actions → publica em `ghcr.io/moonlipe/vpn-gateway:latest`. No servidor, basta:
+
+```bash
+podman pull ghcr.io/moonlipe/vpn-gateway:latest
+podman rm -f vpn-gateway
+bash start.sh
+```
