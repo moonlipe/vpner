@@ -99,6 +99,6 @@ log "Interfaces de rede:"
 ip -brief addr show || true
 
 # Mantém o container vivo enquanto os processos filhos existirem
-wait -n
+wait
 log "Um dos processos de VPN encerrou inesperadamente — verifique os logs em $LOG_DIR"
 cleanup
