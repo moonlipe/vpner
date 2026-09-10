@@ -15,6 +15,11 @@ if [ ! -e /dev/net/tun ]; then
     exit 1
 fi
 
+# Corrige permissões do /dev/ppp (rootless podma mapeia como nobody)
+if [ -e /dev/ppp ]; then
+    chmod 666 /dev/ppp
+fi
+
 PIDS=()
 
 cleanup() {
