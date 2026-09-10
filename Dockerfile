@@ -159,6 +159,8 @@ RUN mkdir -p \
 # Daemon Python (openfortivpn/SAML) — código já clonado no host
 # via chave de deploy, copiado do build context em vpn-daemon/
 # ------------------------------------------------------------
+
+COPY vpn-daemon/ /opt/vpn-daemon/
 COPY vpn-daemon/requirements.txt /opt/vpn-daemon/requirements.txt
 RUN python3 -m venv /opt/vpn-daemon/.venv && \
     /opt/vpn-daemon/.venv/bin/pip install --no-cache-dir --upgrade pip && \
@@ -166,7 +168,6 @@ RUN python3 -m venv /opt/vpn-daemon/.venv && \
     /opt/vpn-daemon/.venv/bin/python -m playwright install chromium chromium-headless-shell && \
     chown -R vpndaemon:vpndaemon /opt/vpn-daemon
 
-COPY vpn-daemon/ /opt/vpn-daemon/
 RUN chown -R vpndaemon:vpndaemon /opt/vpn-daemon
 
 # Scripts de controle (snx, wireguard, entrypoint, healthcheck)
