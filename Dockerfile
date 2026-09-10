@@ -162,6 +162,7 @@ RUN mkdir -p \
 
 COPY vpn-daemon/ /opt/vpn-daemon/
 COPY vpn-daemon/requirements.txt /opt/vpn-daemon/requirements.txt
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/vpn-daemon/.cache/ms-playwright
 RUN python3 -m venv /opt/vpn-daemon/.venv && \
     /opt/vpn-daemon/.venv/bin/pip install --no-cache-dir --upgrade pip && \
     /opt/vpn-daemon/.venv/bin/pip install --no-cache-dir -r /opt/vpn-daemon/requirements.txt && \
