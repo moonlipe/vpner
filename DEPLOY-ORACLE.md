@@ -61,18 +61,29 @@ Mesmo com o módulo carregado, o `pppd` pode falhar com **"Permission denied"** 
 Couldn't open the /dev/ppp device: Permission denied
 ```
 
-**Solução**: adicionar `chmod 666 /dev/ppp` no `entrypoint.sh`, antes de iniciar o daemon.
-
-No `entrypoint.sh`, após a verificação de `/dev/net/tun` (linha 16):
+**Solução**: corrigir as permissões **no host** antes de iniciar o container. O `chmod` dentro do container rootless não funciona (o podman impede alterar permissões de devices mapeados).
 
 ```bash
-# Corrige permissões do /dev/ppp (rootless podman mapeia como nobody)
-if [ -e /dev/ppp ]; then
-    chmod 666 /dev/ppp
-fi
-```
+# Corrigir agora
+sudo chmod 666 /dev/ppp
 
-Após essa mudança, rebuild e push a imagem.
+# Para persistir no boot
+sudo tee /etc/systemd/system/dev-ppp-permissions.service << 'EOF'
+[Unit]
+Description=Fix /dev/ppp permissions for rootless podman
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/chmod 666 /dev/ppp
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl enable dev-ppp-permissions.service
+```
 
 ## Container auto-start no reboot
 
@@ -172,7 +183,7 @@ podman run -d \
 | Erro | Causa | Solução |
 |------|-------|---------|
 | `Module ppp not found` | Kernel Oracle sem PPP | Trocar para kernel genérico (`linux-generic`) |
-| `/dev/ppp: Permission denied` | Rootless mapeia como nobody | `chmod 666 /dev/ppp` no entrypoint |
+| `/dev/ppp: Permission denied` | Rootless mapeia como nobody | `sudo chmod 666 /dev/ppp` no host |
 | `Couldn't open /dev/ppp: No such file` | Device não existe no host | `sudo mknod /dev/ppp c 108 0` |
 | `pppd: The kernel does not support PPP` | Módulo ppp_generic não carregado | `sudo modprobe ppp_generic` |
 | MFA pede toda vez | Volume de sessão não persistente | Usar `-v vpn-daemon-state:/opt/vpn-daemon/.local:Z` |

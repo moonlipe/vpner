@@ -15,8 +15,6 @@ if [ ! -e /dev/net/tun ]; then
     exit 1
 fi
 
-
-
 PIDS=()
 
 cleanup() {

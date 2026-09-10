@@ -86,6 +86,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ppp \
     wireguard-tools \
+    openresolv \
     iproute2 \
     iptables \
     iputils-ping \
