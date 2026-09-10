@@ -65,7 +65,7 @@ RUN ./autogen.sh && \
     # Confirma o binário compilado antes do COPY --from no stage final —
     # se o `make` mudar de layout de saída no futuro, isso falha aqui com
     # mensagem clara em vez de um "file not found" opaco no COPY.
-    test -x /build/src/openfortivpn
+    test -x /build/openfortivpn
 
 # =========================================================
 # Stage 3 - imagem final
@@ -125,7 +125,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Binários do snx-rs e do openfortivpn (compilado do source, com SAML)
 COPY --from=snx-builder /build/target/release/snx-rs /usr/local/bin/snx-rs
 COPY --from=snx-builder /build/target/release/snxctl /usr/local/bin/snxctl
-COPY --from=forti-builder /build/src/openfortivpn /usr/bin/openfortivpn
+COPY --from=forti-builder /build/openfortivpn /usr/bin/openfortivpn
 RUN chmod +x /usr/local/bin/snx-rs /usr/local/bin/snxctl /usr/bin/openfortivpn
 
 # ------------------------------------------------------------
