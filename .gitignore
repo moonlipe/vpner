@@ -12,3 +12,5 @@ config-examples/*.example.filled
 
 # Configs reais (só os .example ficam versionados)
 .claude/
+
+*.tar.gz
